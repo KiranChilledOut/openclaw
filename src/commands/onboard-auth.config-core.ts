@@ -336,17 +336,17 @@ export function applySyntheticConfig(cfg: MoltbotConfig): MoltbotConfig {
   };
 }
 
-export function applyNebiusProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+export function applyNebiusProviderConfig(cfg: MoltbotConfig): MoltbotConfig {
   const models = { ...cfg.agents?.defaults?.models };
 
-  models["nebius/zai-glm-7"] = {
-    ...models["nebius/zai-glm-7"],
-    alias: models["nebius/zai-glm-7"]?.alias ?? "GLM 7",
+  models["zai-org/GLM-4.7-FP8"] = {
+    ...models["zai-org/GLM-4.7-FP8"],
+    alias: models["zai-org/GLM-4.7-FP8"]?.alias ?? "GLM 7",
   };
 
-  models["nebius/zai-glm-5"] = {
-    ...models["nebius/zai-glm-5"],
-    alias: models["nebius/zai-glm-5"]?.alias ?? "GLM 5",
+  models["zai-org/GLM-4.5"] = {
+    ...models["zai-org/GLM-4.5"],
+    alias: models["zai-org/GLM-4.5"]?.alias ?? "GLM 5",
   };
 
   return {
@@ -361,7 +361,7 @@ export function applyNebiusProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   };
 }
 
-export function applyNebiusConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+export function applyNebiusConfig(cfg: MoltbotConfig): MoltbotConfig {
   const next = applyNebiusProviderConfig(cfg);
   const existingModel = next.agents?.defaults?.model;
 
@@ -377,13 +377,12 @@ export function applyNebiusConfig(cfg: ClawdbotConfig): ClawdbotConfig {
                 fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
               }
             : undefined),
-          primary: "nebius/zai-glm-7",
+          primary: "zai-org/GLM-4.7-FP8",
         },
       },
     },
   };
 }
-
 
 /**
  * Apply Venice provider configuration without changing the default model.

@@ -115,7 +115,7 @@ export async function setVeniceApiKey(key: string, agentDir?: string) {
 export const ZAI_DEFAULT_MODEL_REF = "zai/glm-4.7";
 export const OPENROUTER_DEFAULT_MODEL_REF = "openrouter/auto";
 export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF = "vercel-ai-gateway/anthropic/claude-opus-4.5";
-export const NEBIUS_DEFAULT_MODEL_REF = "nebius/meta-llama/Llama-3.3-70B-Instruct-fast"
+export const NEBIUS_DEFAULT_MODEL_REF = "zai-org/GLM-4.7-FP8";
 
 export async function setZaiApiKey(key: string, agentDir?: string) {
   // Write to resolved agent dir so gateway finds credentials on startup.
@@ -166,7 +166,7 @@ export async function setOpencodeZenApiKey(key: string, agentDir?: string) {
   });
 }
 
-export async function seNebiusApiKey(key: string, agentDir?: string) {
+export async function setNebiusApiKey(key: string, agentDir?: string) {
   upsertAuthProfile({
     profileId: "nebius:default",
     credential: {
@@ -177,4 +177,3 @@ export async function seNebiusApiKey(key: string, agentDir?: string) {
     agentDir: resolveAuthAgentDir(agentDir),
   });
 }
-

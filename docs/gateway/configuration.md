@@ -2621,12 +2621,14 @@ Use Nebius via their OpenAI-compatible endpoint:
   agents: {
     defaults: {
       model: {
-        primary: "zai-org/GLM-4.7-FP8",
-        fallbacks: ["zai-org/GLM-4.5"]
+        primary: "Qwen/Qwen3-32B-fast",
+        fallbacks: ["meta-llama/Llama-3.3-70B-Instruct-fast"]
       },
       models: {
-        "zai-org/GLM-4.7-FP8": { alias: "GLM 7 (Nebius)" },
-        "zai-org/GLM-4.5": { alias: "GLM 5 (Nebius)" }
+        "Qwen/Qwen3-32B-fast": { alias: "Qwen3 32B Fast" },
+        "meta-llama/Llama-3.3-70B-Instruct-fast": { alias: "Llama 3.3 70B Fast" },
+        "deepseek-ai/DeepSeek-R1-0528-fast": { alias: "DeepSeek R1 Fast" },
+        "Qwen/Qwen2.5-VL-72B-Instruct": { alias: "Qwen2.5 VL 72B" }
       }
     }
   },
@@ -2639,8 +2641,17 @@ Use Nebius via their OpenAI-compatible endpoint:
         apiKey: "${NEBIUS_API_KEY}",
         api: "openai-completions",
         models: [
-          { id: "zai-org/GLM-4.7-FP8", name: "GLM 7 (Nebius)" },
-          { id: "zai-org/GLM-4.5", name: "GLM 5 (Nebius)" }
+          { id: "Qwen/Qwen3-32B-fast", name: "Qwen3 32B Fast" },
+          { id: "meta-llama/Meta-Llama-3.1-8B-Instruct-fast", name: "Llama 3.1 8B Fast" },
+          { id: "meta-llama/Llama-3.3-70B-Instruct", name: "Llama 3.3 70B" },
+          { id: "meta-llama/Llama-3.3-70B-Instruct-fast", name: "Llama 3.3 70B Fast" },
+          { id: "deepseek-ai/DeepSeek-V3-0324-fast", name: "DeepSeek V3 Fast" },
+          { id: "deepseek-ai/DeepSeek-R1-0528-fast", name: "DeepSeek R1 Fast", reasoning: true },
+          { id: "Qwen/Qwen2.5-VL-72B-Instruct", name: "Qwen2.5 VL 72B", input: ["text", "image"] },
+          { id: "Qwen/Qwen2.5-Coder-7B-fast", name: "Qwen2.5 Coder 7B Fast" },
+          { id: "intfloat/e5-mistral-7b-instruct", name: "e5 Mistral 7B" },
+          { id: "zai-org/GLM-4.7-FP8", name: "GLM 4.7 FP8" },
+          { id: "zai-org/GLM-4.5", name: "GLM 4.5" }
         ]
       }
     }

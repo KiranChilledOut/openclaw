@@ -540,7 +540,7 @@ export async function applyAuthChoiceApiProviders(
       await params.prompter.note(
         [
           "Nebius provides OpenAI-compatible inference for frontier and open models.",
-          "Get your API key at: hhttps://tokenfactory.nebius.com/",
+          "Get your API key at: https://tokenfactory.nebius.com/",
           "Available models: zai-glm-7, zai-glm-5",
         ].join("\n"),
         "Nebius",

@@ -15,6 +15,7 @@ export type AuthChoiceGroupId =
   | "openrouter"
   | "ai-gateway"
   | "moonshot"
+  | "nebius"
   | "zai"
   | "xiaomi"
   | "opencode-zen"
@@ -103,6 +104,18 @@ const AUTH_CHOICE_GROUP_DEFS: {
     choices: ["moonshot-api-key", "kimi-code-api-key"],
   },
   {
+    value: "nebius",
+    label: "Nebius",
+    hint: "OpenAI-compatible",
+    choices: ["nebius-api-key"],
+  },
+  {
+    value: "nebius",
+    label: "Nebius",
+    hint: "OpenAI-compatible",
+    choices: ["nebius-api-key"],
+  },
+  {
     value: "zai",
     label: "Z.AI (GLM 4.7)",
     hint: "API key",
@@ -148,6 +161,7 @@ export function buildAuthChoiceOptions(params: {
   });
   options.push({ value: "moonshot-api-key", label: "Moonshot AI API key" });
   options.push({ value: "kimi-code-api-key", label: "Kimi Code API key" });
+  options.push({ value: "nebius-api-key", label: "Nebius API key" });
   options.push({ value: "synthetic-api-key", label: "Synthetic API key" });
   options.push({
     value: "venice-api-key",

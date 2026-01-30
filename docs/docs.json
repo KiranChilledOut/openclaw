@@ -102,6 +102,14 @@
       "destination": "/providers/moonshot"
     },
     {
+      "source": "/nebius",
+      "destination": "/providers/nebius"
+    },
+    {
+      "source": "/nebius/",
+      "destination": "/providers/nebius"
+    },
+    {
       "source": "/openrouter",
       "destination": "/providers/openrouter"
     },

@@ -41,6 +41,17 @@ const XIAOMI_DEFAULT_COST = {
   cacheWrite: 0,
 };
 
+const NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
+const NEBIUS_DEFAULT_MODEL_ID = "zai-org/GLM-4.7-FP8";
+const NEBIUS_DEFAULT_CONTEXT_WINDOW = 128000;
+const NEBIUS_DEFAULT_MAX_TOKENS = 8192;
+const NEBIUS_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
 const MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1";
 const MOONSHOT_DEFAULT_MODEL_ID = "kimi-k2.5";
 const MOONSHOT_DEFAULT_CONTEXT_WINDOW = 256000;
@@ -101,6 +112,8 @@ interface OllamaTagsResponse {
   models: OllamaModel[];
 }
 
+type OpenAiModelsResponse = { data?: unknown; models?: unknown };
+
 async function discoverOllamaModels(): Promise<ModelDefinitionConfig[]> {
   // Skip Ollama discovery in test environments
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
@@ -135,6 +148,81 @@ async function discoverOllamaModels(): Promise<ModelDefinitionConfig[]> {
     });
   } catch (error) {
     console.warn(`Failed to discover Ollama models: ${String(error)}`);
+    return [];
+  }
+}
+
+function coerceModelEntries(payload: OpenAiModelsResponse): Array<Record<string, unknown>> {
+  if (!payload) return [];
+  if (Array.isArray(payload.data)) {
+    return payload.data.filter((entry) => entry && typeof entry === "object") as Array<
+      Record<string, unknown>
+    >;
+  }
+  if (Array.isArray(payload.models)) {
+    return payload.models.filter((entry) => entry && typeof entry === "object") as Array<
+      Record<string, unknown>
+    >;
+  }
+  return [];
+}
+
+function buildNebiusModelDefinition(entry: Record<string, unknown>): ModelDefinitionConfig | null {
+  const rawId = typeof entry.id === "string" ? entry.id.trim() : "";
+  if (!rawId) return null;
+  const name =
+    typeof entry.name === "string"
+      ? entry.name.trim()
+      : typeof entry.display_name === "string"
+        ? entry.display_name.trim()
+        : rawId;
+  const contextWindow =
+    typeof entry.context_length === "number" && entry.context_length > 0
+      ? entry.context_length
+      : NEBIUS_DEFAULT_CONTEXT_WINDOW;
+  const capabilities =
+    entry.capabilities && typeof entry.capabilities === "object" ? entry.capabilities : undefined;
+  const supportsVision =
+    typeof (capabilities as { vision?: unknown })?.vision === "boolean"
+      ? Boolean((capabilities as { vision?: unknown }).vision)
+      : false;
+  const reasoning =
+    typeof (capabilities as { reasoning?: unknown })?.reasoning === "boolean"
+      ? Boolean((capabilities as { reasoning?: unknown }).reasoning)
+      : false;
+
+  return {
+    id: rawId,
+    name: name || rawId,
+    reasoning,
+    input: supportsVision ? ["text", "image"] : ["text"],
+    cost: NEBIUS_DEFAULT_COST,
+    contextWindow,
+    maxTokens: NEBIUS_DEFAULT_MAX_TOKENS,
+  };
+}
+
+async function discoverNebiusModels(apiKey?: string): Promise<ModelDefinitionConfig[]> {
+  if (process.env.VITEST || process.env.NODE_ENV === "test" || !apiKey?.trim()) {
+    return [];
+  }
+  try {
+    const response = await fetch(`${NEBIUS_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      console.warn(`Failed to discover Nebius models: ${response.status}`);
+      return [];
+    }
+    const payload = (await response.json()) as OpenAiModelsResponse;
+    const entries = coerceModelEntries(payload);
+    const models = entries
+      .map((entry) => buildNebiusModelDefinition(entry))
+      .filter((model): model is ModelDefinitionConfig => Boolean(model));
+    return models;
+  } catch (error) {
+    console.warn(`Failed to discover Nebius models: ${String(error)}`);
     return [];
   }
 }
@@ -250,6 +338,28 @@ export function normalizeProviders(params: {
   }
 
   return mutated ? next : providers;
+}
+
+function buildNebiusDefaultModel(): ModelDefinitionConfig {
+  return {
+    id: NEBIUS_DEFAULT_MODEL_ID,
+    name: "Nebius GLM 4.7",
+    reasoning: false,
+    input: ["text"],
+    cost: NEBIUS_DEFAULT_COST,
+    contextWindow: NEBIUS_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: NEBIUS_DEFAULT_MAX_TOKENS,
+  };
+}
+
+function buildNebiusProvider(models?: ModelDefinitionConfig[]): ProviderConfig {
+  const resolvedModels =
+    Array.isArray(models) && models.length > 0 ? models : [buildNebiusDefaultModel()];
+  return {
+    baseUrl: NEBIUS_BASE_URL,
+    api: "openai-completions",
+    models: resolvedModels,
+  };
 }
 
 function buildMinimaxProvider(): ProviderConfig {
@@ -429,6 +539,14 @@ export async function resolveImplicitProviders(params: {
     resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
   if (veniceKey) {
     providers.venice = { ...(await buildVeniceProvider()), apiKey: veniceKey };
+  }
+
+  const nebiusKey =
+    resolveEnvApiKeyVarName("nebius") ??
+    resolveApiKeyFromProfiles({ provider: "nebius", store: authStore });
+  if (nebiusKey) {
+    const nebiusModels = await discoverNebiusModels(nebiusKey);
+    providers.nebius = { ...buildNebiusProvider(nebiusModels), apiKey: nebiusKey };
   }
 
   const qwenProfiles = listProfilesForProvider(authStore, "qwen-portal");

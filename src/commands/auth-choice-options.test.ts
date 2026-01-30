@@ -65,6 +65,16 @@ describe("buildAuthChoiceOptions", () => {
     expect(options.some((opt) => opt.value === "kimi-code-api-key")).toBe(true);
   });
 
+  it("includes Nebius auth choice", () => {
+    const store: AuthProfileStore = { version: 1, profiles: {} };
+    const options = buildAuthChoiceOptions({
+      store,
+      includeSkip: false,
+    });
+
+    expect(options.some((opt) => opt.value === "nebius-api-key")).toBe(true);
+  });
+
   it("includes Vercel AI Gateway auth choice", () => {
     const store: AuthProfileStore = { version: 1, profiles: {} };
     const options = buildAuthChoiceOptions({

@@ -186,6 +186,30 @@ Kimi Code uses a dedicated endpoint and key (separate from Moonshot):
 }
 ```
 
+### Nebius
+
+- Provider: `nebius`
+- Auth: `NEBIUS_API_KEY`
+- Example model: `nebius/zai-org/GLM-4.7-FP8`
+
+```json5
+{
+  agents: {
+    defaults: { model: { primary: "nebius/zai-org/GLM-4.7-FP8" } }
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      nebius: {
+        baseUrl: "https://api.tokenfactory.nebius.com/v1",
+        apiKey: "${NEBIUS_API_KEY}",
+        api: "openai-completions"
+      }
+    }
+  }
+}
+```
+
 ### Qwen OAuth (free tier)
 
 Qwen provides OAuth access to Qwen Coder + Vision via a device-code flow.

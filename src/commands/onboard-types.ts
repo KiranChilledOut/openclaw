@@ -20,6 +20,7 @@ export type AuthChoice =
   | "synthetic-api-key"
   | "venice-api-key"
   | "nebius-token-factory-api-key"
+  | "together-api-key"
   | "codex-cli"
   | "apiKey"
   | "gemini-api-key"
@@ -82,6 +83,7 @@ export type OnboardOptions = {
   syntheticApiKey?: string;
   veniceApiKey?: string;
   nebiusTokenFactoryApiKey?: string;
+  togetherApiKey?: string;
   opencodeZenApiKey?: string;
   xaiApiKey?: string;
   qianfanApiKey?: string;

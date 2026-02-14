@@ -291,6 +291,10 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     return pick("NEBIUS_TOKEN_FACTORY") ?? pick("NEBIUS_API_KEY");
   }
 
+  if (normalized === "huggingface") {
+    return pick("HUGGINGFACE_HUB_TOKEN") ?? pick("HF_TOKEN");
+  }
+
   const envMap: Record<string, string> = {
     openai: "OPENAI_API_KEY",
     google: "GEMINI_API_KEY",
@@ -305,6 +309,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     "cloudflare-ai-gateway": "CLOUDFLARE_AI_GATEWAY_API_KEY",
     moonshot: "MOONSHOT_API_KEY",
     minimax: "MINIMAX_API_KEY",
+    nvidia: "NVIDIA_API_KEY",
     xiaomi: "XIAOMI_API_KEY",
     synthetic: "SYNTHETIC_API_KEY",
     venice: "VENICE_API_KEY",
@@ -313,6 +318,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     together: "TOGETHER_API_KEY",
     qianfan: "QIANFAN_API_KEY",
     ollama: "OLLAMA_API_KEY",
+    vllm: "VLLM_API_KEY",
   };
   const envVar = envMap[normalized];
   if (!envVar) {

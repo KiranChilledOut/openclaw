@@ -15,6 +15,7 @@ import {
   applyQianfanConfig,
   applyKimiCodeConfig,
   applyMinimaxApiConfig,
+  applyMinimaxApiConfigCn,
   applyMinimaxConfig,
   applyMoonshotConfig,
   applyMoonshotConfigCn,
@@ -24,6 +25,7 @@ import {
   applySyntheticConfig,
   applyVeniceConfig,
   applyTogetherConfig,
+  applyHuggingfaceConfig,
   applyVercelAiGatewayConfig,
   applyLitellmConfig,
   applyXaiConfig,
@@ -44,6 +46,7 @@ import {
   setXaiApiKey,
   setVeniceApiKey,
   setTogetherApiKey,
+  setHuggingfaceApiKey,
   setVercelAiGatewayApiKey,
   setXiaomiApiKey,
   setZaiApiKey,
@@ -84,6 +87,17 @@ export async function applyNonInteractiveAuthChoice(params: {
       [
         'Auth choice "setup-token" requires interactive mode.',
         'Use "--auth-choice token" with --token and --token-provider anthropic.',
+      ].join("\n"),
+    );
+    runtime.exit(1);
+    return null;
+  }
+
+  if (authChoice === "vllm") {
+    runtime.error(
+      [
+        'Auth choice "vllm" requires interactive mode.',
+        "Use interactive onboard/configure to enter base URL, API key, and model ID.",
       ].join("\n"),
     );
     runtime.exit(1);
@@ -583,10 +597,14 @@ export async function applyNonInteractiveAuthChoice(params: {
   if (
     authChoice === "minimax-cloud" ||
     authChoice === "minimax-api" ||
+    authChoice === "minimax-api-key-cn" ||
     authChoice === "minimax-api-lightning"
   ) {
+    const isCn = authChoice === "minimax-api-key-cn";
+    const providerId = isCn ? "minimax-cn" : "minimax";
+    const profileId = `${providerId}:default`;
     const resolved = await resolveNonInteractiveApiKey({
-      provider: "minimax",
+      provider: providerId,
       cfg: baseConfig,
       flagValue: opts.minimaxApiKey,
       flagName: "--minimax-api-key",
@@ -597,16 +615,18 @@ export async function applyNonInteractiveAuthChoice(params: {
       return null;
     }
     if (resolved.source !== "profile") {
-      await setMinimaxApiKey(resolved.key);
+      await setMinimaxApiKey(resolved.key, undefined, profileId);
     }
     nextConfig = applyAuthProfileConfig(nextConfig, {
-      profileId: "minimax:default",
-      provider: "minimax",
+      profileId,
+      provider: providerId,
       mode: "api_key",
     });
     const modelId =
-      authChoice === "minimax-api-lightning" ? "MiniMax-M2.1-lightning" : "MiniMax-M2.1";
-    return applyMinimaxApiConfig(nextConfig, modelId);
+      authChoice === "minimax-api-lightning" ? "MiniMax-M2.5-Lightning" : "MiniMax-M2.5";
+    return isCn
+      ? applyMinimaxApiConfigCn(nextConfig, modelId)
+      : applyMinimaxApiConfig(nextConfig, modelId);
   }
 
   if (authChoice === "minimax") {
@@ -657,6 +677,29 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     return applyTogetherConfig(nextConfig);
+  }
+
+  if (authChoice === "huggingface-api-key") {
+    const resolved = await resolveNonInteractiveApiKey({
+      provider: "huggingface",
+      cfg: baseConfig,
+      flagValue: opts.huggingfaceApiKey,
+      flagName: "--huggingface-api-key",
+      envVar: "HF_TOKEN",
+      runtime,
+    });
+    if (!resolved) {
+      return null;
+    }
+    if (resolved.source !== "profile") {
+      await setHuggingfaceApiKey(resolved.key);
+    }
+    nextConfig = applyAuthProfileConfig(nextConfig, {
+      profileId: "huggingface:default",
+      provider: "huggingface",
+      mode: "api_key",
+    });
+    return applyHuggingfaceConfig(nextConfig);
   }
 
   if (authChoice === "custom-api-key") {

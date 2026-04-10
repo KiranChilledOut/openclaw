@@ -1,13 +1,25 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { withTempDir } from "../test-helpers/temp-dir.js";
 import { withEnv } from "../test-utils/env.js";
 import {
   buildTrustedSafeBinDirs,
   getTrustedSafeBinDirs,
   isTrustedSafeBinPath,
+  listWritableExplicitTrustedSafeBinDirs,
 } from "./exec-safe-bin-trust.js";
 
 describe("exec safe bin trust", () => {
+  it("keeps default trusted dirs limited to immutable system paths", () => {
+    const dirs = getTrustedSafeBinDirs({ refresh: true });
+
+    expect(dirs.has(path.resolve("/bin"))).toBe(true);
+    expect(dirs.has(path.resolve("/usr/bin"))).toBe(true);
+    expect(dirs.has(path.resolve("/usr/local/bin"))).toBe(false);
+    expect(dirs.has(path.resolve("/opt/homebrew/bin"))).toBe(false);
+  });
+
   it("builds trusted dirs from defaults and explicit extra dirs", () => {
     const dirs = buildTrustedSafeBinDirs({
       baseDirs: ["/usr/bin"],
@@ -58,6 +70,27 @@ describe("exec safe bin trust", () => {
     withEnv({ PATH: `${injected}${path.delimiter}${process.env.PATH ?? ""}` }, () => {
       const refreshed = getTrustedSafeBinDirs({ refresh: true });
       expect(refreshed.has(path.resolve(injected))).toBe(false);
+    });
+  });
+
+  it("flags explicitly trusted dirs that are group/world writable", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    await withTempDir({ prefix: "openclaw-safe-bin-trust-" }, async (dir) => {
+      try {
+        await fs.chmod(dir, 0o777);
+        const hits = listWritableExplicitTrustedSafeBinDirs([dir]);
+        expect(hits).toEqual([
+          {
+            dir: path.resolve(dir),
+            groupWritable: true,
+            worldWritable: true,
+          },
+        ]);
+      } finally {
+        await fs.chmod(dir, 0o755).catch(() => undefined);
+      }
     });
   });
 });

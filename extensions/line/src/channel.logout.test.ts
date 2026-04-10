@@ -1,11 +1,7 @@
-import type {
-  OpenClawConfig,
-  PluginRuntime,
-  ResolvedLineAccount,
-  RuntimeEnv,
-} from "openclaw/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { linePlugin } from "./channel.js";
+import { createRuntimeEnv } from "../../../test/helpers/plugins/runtime-env.js";
+import type { OpenClawConfig, PluginRuntime, ResolvedLineAccount } from "../api.js";
+import { lineGatewayAdapter } from "./gateway.js";
 import { setLineRuntime } from "./runtime.js";
 
 const DEFAULT_ACCOUNT_ID = "default";
@@ -31,9 +27,7 @@ function createRuntime(): { runtime: PluginRuntime; mocks: LineRuntimeMocks } {
           ? (lineConfig.accounts?.[accountId] ?? {})
           : lineConfig;
       const hasToken =
-        // oxlint-disable-next-line typescript/no-explicit-any
         Boolean((entry as any).channelAccessToken) || Boolean((entry as any).tokenFile);
-      // oxlint-disable-next-line typescript/no-explicit-any
       const hasSecret = Boolean((entry as any).channelSecret) || Boolean((entry as any).secretFile);
       return { tokenSource: hasToken && hasSecret ? "config" : "none" };
     },
@@ -41,20 +35,9 @@ function createRuntime(): { runtime: PluginRuntime; mocks: LineRuntimeMocks } {
 
   const runtime = {
     config: { writeConfigFile },
-    channel: { line: { resolveLineAccount } },
   } as unknown as PluginRuntime;
 
   return { runtime, mocks: { writeConfigFile, resolveLineAccount } };
-}
-
-function createRuntimeEnv(): RuntimeEnv {
-  return {
-    log: vi.fn(),
-    error: vi.fn(),
-    exit: vi.fn((code: number): never => {
-      throw new Error(`exit ${code}`);
-    }),
-  };
 }
 
 function resolveAccount(
@@ -70,13 +53,13 @@ function resolveAccount(
 }
 
 async function runLogoutScenario(params: { cfg: OpenClawConfig; accountId: string }): Promise<{
-  result: Awaited<ReturnType<NonNullable<NonNullable<typeof linePlugin.gateway>["logoutAccount"]>>>;
+  result: Awaited<ReturnType<NonNullable<typeof lineGatewayAdapter.logoutAccount>>>;
   mocks: LineRuntimeMocks;
 }> {
   const { runtime, mocks } = createRuntime();
   setLineRuntime(runtime);
   const account = resolveAccount(mocks.resolveLineAccount, params.cfg, params.accountId);
-  const result = await linePlugin.gateway!.logoutAccount!({
+  const result = await lineGatewayAdapter.logoutAccount!({
     accountId: params.accountId,
     cfg: params.cfg,
     account,

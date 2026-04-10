@@ -11,11 +11,12 @@ import {
 } from "./pi-embedded-subscribe.e2e-harness.js";
 import { subscribeEmbeddedPiSession } from "./pi-embedded-subscribe.js";
 
-type StubSession = {
-  subscribe: (fn: (evt: unknown) => void) => () => void;
-};
-
 describe("subscribeEmbeddedPiSession", () => {
+  async function flushBlockReplyCallbacks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
   function createAgentEventHarness(options?: { runId?: string; sessionKey?: string }) {
     const { session, emit } = createStubSessionHarness();
     const onAgentEvent = vi.fn();
@@ -39,6 +40,50 @@ describe("subscribeEmbeddedPiSession", () => {
     });
 
     return { emit, subscription };
+  }
+
+  function createSubscribedHarness(
+    options: Omit<Parameters<typeof subscribeEmbeddedPiSession>[0], "session">,
+  ) {
+    const { session, emit } = createStubSessionHarness();
+    subscribeEmbeddedPiSession({
+      session,
+      ...options,
+    });
+    return { emit };
+  }
+
+  function emitAssistantTextDelta(
+    emit: (evt: unknown) => void,
+    delta: string,
+    message: Record<string, unknown> = { role: "assistant" },
+  ) {
+    emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta,
+      },
+    });
+  }
+
+  function createWriteFailureHarness(params: {
+    runId: string;
+    path: string;
+    content: string;
+  }): ReturnType<typeof createToolErrorHarness> {
+    const harness = createToolErrorHarness(params.runId);
+    emitToolRun({
+      emit: harness.emit,
+      toolName: "write",
+      toolCallId: "w1",
+      args: { path: params.path, content: params.content },
+      isError: true,
+      result: { error: "disk full" },
+    });
+    expect(harness.subscription.getLastToolError()?.toolName).toBe("write");
+    return harness;
   }
 
   function emitToolRun(params: {
@@ -66,20 +111,11 @@ describe("subscribeEmbeddedPiSession", () => {
 
   it.each(THINKING_TAG_CASES)(
     "streams <%s> reasoning via onReasoningStream without leaking into final text",
-    ({ open, close }) => {
-      let handler: ((evt: unknown) => void) | undefined;
-      const session: StubSession = {
-        subscribe: (fn) => {
-          handler = fn;
-          return () => {};
-        },
-      };
-
+    async ({ open, close }) => {
       const onReasoningStream = vi.fn();
       const onBlockReply = vi.fn();
 
-      subscribeEmbeddedPiSession({
-        session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+      const { emit } = createSubscribedHarness({
         runId: "run",
         onReasoningStream,
         onBlockReply,
@@ -87,23 +123,8 @@ describe("subscribeEmbeddedPiSession", () => {
         reasoningMode: "stream",
       });
 
-      handler?.({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: `${open}\nBecause`,
-        },
-      });
-
-      handler?.({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: ` it helps\n${close}\n\nFinal answer`,
-        },
-      });
+      emitAssistantTextDelta(emit, `${open}\nBecause`);
+      emitAssistantTextDelta(emit, ` it helps\n${close}\n\nFinal answer`);
 
       const assistantMessage = {
         role: "assistant",
@@ -115,7 +136,8 @@ describe("subscribeEmbeddedPiSession", () => {
         ],
       } as AssistantMessage;
 
-      handler?.({ type: "message_end", message: assistantMessage });
+      emit({ type: "message_end", message: assistantMessage });
+      await flushBlockReplyCallbacks();
 
       expect(onBlockReply).toHaveBeenCalledTimes(1);
       expect(onBlockReply.mock.calls[0][0].text).toBe("Final answer");
@@ -131,21 +153,113 @@ describe("subscribeEmbeddedPiSession", () => {
       ]);
     },
   );
+
+  it("suppresses assistant streaming while deterministic exec approval delivery is pending", async () => {
+    let resolveToolResult: (() => void) | undefined;
+    const onToolResult = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveToolResult = resolve;
+        }),
+    );
+    const onPartialReply = vi.fn();
+
+    const { emit } = createSubscribedHarness({
+      runId: "run",
+      onToolResult,
+      onPartialReply,
+    });
+
+    emit({
+      type: "tool_execution_start",
+      toolName: "exec",
+      toolCallId: "tool-1",
+      args: { command: "echo hi" },
+    });
+    emit({
+      type: "tool_execution_end",
+      toolName: "exec",
+      toolCallId: "tool-1",
+      isError: false,
+      result: {
+        details: {
+          status: "approval-pending",
+          approvalId: "12345678-1234-1234-1234-123456789012",
+          approvalSlug: "12345678",
+          host: "gateway",
+          command: "echo hi",
+        },
+      },
+    });
+
+    emit({
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    emitAssistantTextDelta(emit, "After tool");
+
+    await vi.waitFor(() => {
+      expect(onToolResult).toHaveBeenCalledTimes(1);
+    });
+    expect(onPartialReply).not.toHaveBeenCalled();
+
+    expect(resolveToolResult).toBeTypeOf("function");
+    resolveToolResult?.();
+    await Promise.resolve();
+    expect(onPartialReply).not.toHaveBeenCalled();
+  });
+
+  it("attaches media from internal completion events even when assistant omits MEDIA lines", async () => {
+    const onBlockReply = vi.fn();
+    const { emit } = createSubscribedHarness({
+      runId: "run",
+      onBlockReply,
+      blockReplyBreak: "message_end",
+      internalEvents: [
+        {
+          type: "task_completion",
+          source: "music_generation",
+          childSessionKey: "music_generate:task-123",
+          announceType: "music generation task",
+          taskLabel: "lobster boss theme",
+          status: "ok",
+          statusLabel: "completed successfully",
+          result: "Generated 1 track.\nMEDIA:/tmp/lobster-boss.mp3",
+          mediaUrls: ["/tmp/lobster-boss.mp3"],
+          replyInstruction: "Reply normally.",
+        },
+      ],
+    });
+
+    emit({
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    emitAssistantTextDelta(emit, "Here it is.");
+    emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Here it is." }],
+      },
+    });
+    emit({ type: "agent_end" });
+    await flushBlockReplyCallbacks();
+
+    expect(onBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Here it is.",
+        mediaUrls: ["/tmp/lobster-boss.mp3"],
+      }),
+    );
+  });
+
   it.each(THINKING_TAG_CASES)(
     "suppresses <%s> blocks across chunk boundaries",
-    ({ open, close }) => {
-      let handler: ((evt: unknown) => void) | undefined;
-      const session: StubSession = {
-        subscribe: (fn) => {
-          handler = fn;
-          return () => {};
-        },
-      };
-
+    async ({ open, close }) => {
       const onBlockReply = vi.fn();
 
-      subscribeEmbeddedPiSession({
-        session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+      const { emit } = createSubscribedHarness({
         runId: "run",
         onBlockReply,
         blockReplyBreak: "text_end",
@@ -156,38 +270,23 @@ describe("subscribeEmbeddedPiSession", () => {
         },
       });
 
-      handler?.({ type: "message_start", message: { role: "assistant" } });
-
-      handler?.({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: `${open}Reasoning chunk that should not leak`,
-        },
-      });
+      emit({ type: "message_start", message: { role: "assistant" } });
+      emitAssistantTextDelta(emit, `${open}Reasoning chunk that should not leak`);
 
       expect(onBlockReply).not.toHaveBeenCalled();
 
-      handler?.({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: `${close}\n\nFinal answer`,
-        },
-      });
-
-      handler?.({
+      emitAssistantTextDelta(emit, `${close}\n\nFinal answer`);
+      emit({
         type: "message_update",
         message: { role: "assistant" },
         assistantMessageEvent: { type: "text_end" },
       });
+      await flushBlockReplyCallbacks();
 
+      expect(onBlockReply.mock.calls.length).toBeGreaterThan(0);
       const payloadTexts = onBlockReply.mock.calls
         .map((call) => call[0]?.text)
         .filter((value): value is string => typeof value === "string");
-      expect(payloadTexts.length).toBeGreaterThan(0);
       for (const text of payloadTexts) {
         expect(text).not.toContain("Reasoning");
         expect(text).not.toContain(open);
@@ -198,26 +297,17 @@ describe("subscribeEmbeddedPiSession", () => {
   );
 
   it("streams native thinking_delta events and signals reasoning end", () => {
-    let handler: ((evt: unknown) => void) | undefined;
-    const session: StubSession = {
-      subscribe: (fn) => {
-        handler = fn;
-        return () => {};
-      },
-    };
-
     const onReasoningStream = vi.fn();
     const onReasoningEnd = vi.fn();
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    const { emit } = createSubscribedHarness({
       runId: "run",
       reasoningMode: "stream",
       onReasoningStream,
       onReasoningEnd,
     });
 
-    handler?.({
+    emit({
       type: "message_update",
       message: {
         role: "assistant",
@@ -229,7 +319,7 @@ describe("subscribeEmbeddedPiSession", () => {
       },
     });
 
-    handler?.({
+    emit({
       type: "message_update",
       message: {
         role: "assistant",
@@ -248,36 +338,18 @@ describe("subscribeEmbeddedPiSession", () => {
   });
 
   it("emits reasoning end once when native and tagged reasoning end overlap", () => {
-    let handler: ((evt: unknown) => void) | undefined;
-    const session: StubSession = {
-      subscribe: (fn) => {
-        handler = fn;
-        return () => {};
-      },
-    };
-
     const onReasoningEnd = vi.fn();
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    const { emit } = createSubscribedHarness({
       runId: "run",
       reasoningMode: "stream",
       onReasoningStream: vi.fn(),
       onReasoningEnd,
     });
 
-    handler?.({ type: "message_start", message: { role: "assistant" } });
-
-    handler?.({
-      type: "message_update",
-      message: { role: "assistant" },
-      assistantMessageEvent: {
-        type: "text_delta",
-        delta: "<think>Checking",
-      },
-    });
-
-    handler?.({
+    emit({ type: "message_start", message: { role: "assistant" } });
+    emitAssistantTextDelta(emit, "<think>Checking");
+    emit({
       type: "message_update",
       message: {
         role: "assistant",
@@ -288,14 +360,7 @@ describe("subscribeEmbeddedPiSession", () => {
       },
     });
 
-    handler?.({
-      type: "message_update",
-      message: { role: "assistant" },
-      assistantMessageEvent: {
-        type: "text_delta",
-        delta: " files</think>\nFinal answer",
-      },
-    });
+    emitAssistantTextDelta(emit, " files</think>\nFinal answer");
 
     expect(onReasoningEnd).toHaveBeenCalledTimes(1);
   });
@@ -352,35 +417,28 @@ describe("subscribeEmbeddedPiSession", () => {
     expect(payloads).toHaveLength(1);
   });
 
-  it("skips agent events when cleaned text rewinds mid-stream", () => {
+  it("emits a replacement snapshot when cleaned text rewinds mid-stream", () => {
     const { emit, onAgentEvent } = createAgentEventHarness();
 
     emit({ type: "message_start", message: { role: "assistant" } });
-    emit({
-      type: "message_update",
-      message: { role: "assistant" },
-      assistantMessageEvent: { type: "text_delta", delta: "MEDIA:" },
-    });
-    emit({
-      type: "message_update",
-      message: { role: "assistant" },
-      assistantMessageEvent: { type: "text_delta", delta: " https://example.com/a.png\nCaption" },
-    });
+    emitAssistantTextDelta(emit, "MEDIA:");
+    emitAssistantTextDelta(emit, " https://example.com/a.png\nCaption");
 
     const payloads = extractAgentEventPayloads(onAgentEvent.mock.calls);
-    expect(payloads).toHaveLength(1);
+    expect(payloads).toHaveLength(2);
     expect(payloads[0]?.text).toBe("MEDIA:");
+    expect(payloads[0]?.delta).toBe("MEDIA:");
+    expect(payloads[0]?.replace).toBeUndefined();
+    expect(payloads[1]?.text).toBe("Caption");
+    expect(payloads[1]?.delta).toBe("");
+    expect(payloads[1]?.replace).toBe(true);
   });
 
   it("emits agent events when media arrives without text", () => {
     const { emit, onAgentEvent } = createAgentEventHarness();
 
     emit({ type: "message_start", message: { role: "assistant" } });
-    emit({
-      type: "message_update",
-      message: { role: "assistant" },
-      assistantMessageEvent: { type: "text_delta", delta: "MEDIA: https://example.com/a.png" },
-    });
+    emitAssistantTextDelta(emit, "MEDIA: https://example.com/a.png");
 
     const payloads = extractAgentEventPayloads(onAgentEvent.mock.calls);
     expect(payloads).toHaveLength(1);
@@ -389,17 +447,11 @@ describe("subscribeEmbeddedPiSession", () => {
   });
 
   it("keeps unresolved mutating failure when an unrelated tool succeeds", () => {
-    const { emit, subscription } = createToolErrorHarness("run-tools-1");
-
-    emitToolRun({
-      emit,
-      toolName: "write",
-      toolCallId: "w1",
-      args: { path: "/tmp/demo.txt", content: "next" },
-      isError: true,
-      result: { error: "disk full" },
+    const { emit, subscription } = createWriteFailureHarness({
+      runId: "run-tools-1",
+      path: "/tmp/demo.txt",
+      content: "next",
     });
-    expect(subscription.getLastToolError()?.toolName).toBe("write");
 
     emitToolRun({
       emit,
@@ -414,17 +466,11 @@ describe("subscribeEmbeddedPiSession", () => {
   });
 
   it("clears unresolved mutating failure when the same action succeeds", () => {
-    const { emit, subscription } = createToolErrorHarness("run-tools-2");
-
-    emitToolRun({
-      emit,
-      toolName: "write",
-      toolCallId: "w1",
-      args: { path: "/tmp/demo.txt", content: "next" },
-      isError: true,
-      result: { error: "disk full" },
+    const { emit, subscription } = createWriteFailureHarness({
+      runId: "run-tools-2",
+      path: "/tmp/demo.txt",
+      content: "next",
     });
-    expect(subscription.getLastToolError()?.toolName).toBe("write");
 
     emitToolRun({
       emit,

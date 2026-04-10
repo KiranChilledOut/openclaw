@@ -8,9 +8,17 @@ import { readJsonBody } from "./hooks.js";
  * Content-Security-Policy are intentionally omitted here because some handlers
  * (canvas host, A2UI) serve content that may be loaded inside frames.
  */
-export function setDefaultSecurityHeaders(res: ServerResponse) {
+export function setDefaultSecurityHeaders(
+  res: ServerResponse,
+  opts?: { strictTransportSecurity?: string },
+) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  const strictTransportSecurity = opts?.strictTransportSecurity;
+  if (typeof strictTransportSecurity === "string" && strictTransportSecurity.length > 0) {
+    res.setHeader("Strict-Transport-Security", strictTransportSecurity);
+  }
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -97,4 +105,36 @@ export function setSseHeaders(res: ServerResponse) {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
+}
+
+export function watchClientDisconnect(
+  req: IncomingMessage,
+  res: ServerResponse,
+  abortController: AbortController,
+  onDisconnect?: () => void,
+) {
+  const sockets = Array.from(
+    new Set(
+      [req.socket, res.socket].filter(
+        (socket): socket is NonNullable<typeof socket> => socket !== null,
+      ),
+    ),
+  );
+  if (sockets.length === 0) {
+    return () => {};
+  }
+  const handleClose = () => {
+    onDisconnect?.();
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+  };
+  for (const socket of sockets) {
+    socket.on("close", handleClose);
+  }
+  return () => {
+    for (const socket of sockets) {
+      socket.off("close", handleClose);
+    }
+  };
 }

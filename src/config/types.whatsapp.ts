@@ -1,10 +1,15 @@
+import type { ReactionLevel } from "../utils/reaction-level.js";
 import type {
   BlockStreamingCoalesceConfig,
+  ContextVisibilityMode,
   DmPolicy,
   GroupPolicy,
   MarkdownConfig,
 } from "./types.base.js";
-import type { ChannelHeartbeatVisibilityConfig } from "./types.channels.js";
+import type {
+  ChannelHealthMonitorConfig,
+  ChannelHeartbeatVisibilityConfig,
+} from "./types.channels.js";
 import type { DmConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
@@ -13,6 +18,8 @@ export type WhatsAppActionConfig = {
   sendMessage?: boolean;
   polls?: boolean;
 };
+
+export type WhatsAppReactionLevel = ReactionLevel;
 
 export type WhatsAppGroupConfig = {
   requireMention?: boolean;
@@ -36,6 +43,8 @@ export type WhatsAppAckReactionConfig = {
 };
 
 type WhatsAppSharedConfig = {
+  /** Whether the WhatsApp channel is enabled. */
+  enabled?: boolean;
   /** Direct message access policy (default: pairing). */
   dmPolicy?: DmPolicy;
   /** Same-phone setup (bot uses your personal WhatsApp number). */
@@ -53,6 +62,8 @@ type WhatsAppSharedConfig = {
    * - "allowlist": only allow group messages from senders in groupAllowFrom/allowFrom
    */
   groupPolicy?: GroupPolicy;
+  /** Supplemental context visibility policy (all|allowlist|allowlist_quote). */
+  contextVisibility?: ContextVisibilityMode;
   /** Max group messages to keep as history context (0 disables). */
   historyLimit?: number;
   /** Max DM turns to keep as history context. */
@@ -72,10 +83,20 @@ type WhatsAppSharedConfig = {
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;
+  /**
+   * Controls agent reaction behavior:
+   * - "off": No reactions
+   * - "ack": Only automatic ack reactions
+   * - "minimal" (default): Agent can react sparingly
+   * - "extensive": Agent can react liberally
+   */
+  reactionLevel?: WhatsAppReactionLevel;
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;
   /** Heartbeat visibility settings. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
+  /** Channel health monitor overrides for this channel/account. */
+  healthMonitor?: ChannelHealthMonitorConfig;
 };
 
 type WhatsAppConfigCore = {
@@ -97,6 +118,8 @@ export type WhatsAppConfig = WhatsAppConfigCore &
   WhatsAppSharedConfig & {
     /** Optional per-account WhatsApp configuration (multi-account). */
     accounts?: Record<string, WhatsAppAccountConfig>;
+    /** Optional default account id when multiple accounts are configured. */
+    defaultAccount?: string;
     /** Per-action tool gating (default: true for all). */
     actions?: WhatsAppActionConfig;
   };
@@ -110,3 +133,9 @@ export type WhatsAppAccountConfig = WhatsAppConfigCore &
     /** Override auth directory (Baileys multi-file auth state). */
     authDir?: string;
   };
+
+declare module "./types.channels.js" {
+  interface ChannelsConfig {
+    whatsapp?: WhatsAppConfig;
+  }
+}

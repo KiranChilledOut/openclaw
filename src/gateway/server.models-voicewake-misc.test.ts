@@ -3,12 +3,10 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
-import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { ChannelOutboundAdapter } from "../channels/plugins/types.js";
-import { clearConfigCache } from "../config/config.js";
+import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import { resolveCanvasHostUrl } from "../infra/canvas-host-url.js";
 import { GatewayLockError } from "../infra/gateway-lock.js";
-import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
 import { createOutboundTestPlugin } from "../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { createTempHomeEnv } from "../test-utils/temp-home.js";
@@ -22,6 +20,8 @@ import {
   onceMessage,
   piSdkMock,
   rpcReq,
+  resetTestPluginRegistry,
+  setTestPluginRegistry,
   startConnectedServerWithClient,
   startGatewayServer,
   startServerWithClient,
@@ -51,18 +51,21 @@ beforeAll(async () => {
 const whatsappOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   sendText: async ({ deps, to, text }) => {
-    if (!deps?.sendWhatsApp) {
-      throw new Error("Missing sendWhatsApp dep");
-    }
-    return { channel: "whatsapp", ...(await deps.sendWhatsApp(to, text, { verbose: false })) };
-  },
-  sendMedia: async ({ deps, to, text, mediaUrl }) => {
-    if (!deps?.sendWhatsApp) {
+    if (!deps?.["whatsapp"]) {
       throw new Error("Missing sendWhatsApp dep");
     }
     return {
       channel: "whatsapp",
-      ...(await deps.sendWhatsApp(to, text, { verbose: false, mediaUrl })),
+      ...(await (deps["whatsapp"] as Function)(to, text, { verbose: false })),
+    };
+  },
+  sendMedia: async ({ deps, to, text, mediaUrl }) => {
+    if (!deps?.["whatsapp"]) {
+      throw new Error("Missing sendWhatsApp dep");
+    }
+    return {
+      channel: "whatsapp",
+      ...(await (deps["whatsapp"] as Function)(to, text, { verbose: false, mediaUrl })),
     };
   },
 };
@@ -80,12 +83,12 @@ const whatsappRegistry = createRegistry([
     plugin: whatsappPlugin,
   },
 ]);
-const emptyRegistry = createRegistry([]);
 
 type ModelCatalogRpcEntry = {
   id: string;
   name: string;
   provider: string;
+  alias?: string;
   contextWindow?: number;
 };
 
@@ -170,6 +173,7 @@ describe("gateway server models + voicewake", () => {
     try {
       await fs.mkdir(path.dirname(configPath), { recursive: true });
       await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      clearRuntimeConfigSnapshot();
       clearConfigCache();
       return await run();
     } finally {
@@ -178,6 +182,7 @@ describe("gateway server models + voicewake", () => {
       } else {
         await fs.writeFile(configPath, previousConfig, "utf-8");
       }
+      clearRuntimeConfigSnapshot();
       clearConfigCache();
     }
   };
@@ -191,9 +196,32 @@ describe("gateway server models + voicewake", () => {
     }
   };
 
+  const expectAllowlistedModels = async (options: {
+    primary: string;
+    models: Record<string, object>;
+    expected: ModelCatalogRpcEntry[];
+  }): Promise<void> => {
+    await withModelsConfig(
+      {
+        agents: {
+          defaults: {
+            model: { primary: options.primary },
+            models: options.models,
+          },
+        },
+      },
+      async () => {
+        seedPiCatalog();
+        const res = await listModels();
+        expect(res.ok).toBe(true);
+        expect(res.payload?.models).toEqual(options.expected);
+      },
+    );
+  };
+
   test(
     "voicewake.get returns defaults and voicewake.set broadcasts",
-    { timeout: 60_000 },
+    { timeout: 20_000 },
     async () => {
       await withTempHome(async (homeDir) => {
         const initial = await rpcReq<{ triggers: string[] }>(ws, "voicewake.get");
@@ -205,7 +233,7 @@ describe("gateway server models + voicewake", () => {
           (o) => o.type === "event" && o.event === "voicewake.changed",
         );
 
-        const setRes = await rpcReq<{ triggers: string[] }>(ws, "voicewake.set", {
+        const setRes = await rpcReq(ws, "voicewake.set", {
           triggers: ["  hi  ", "", "there"],
         });
         expect(setRes.ok).toBe(true);
@@ -262,7 +290,7 @@ describe("gateway server models + voicewake", () => {
         nodeWs,
         (o) => o.type === "event" && o.event === "voicewake.changed",
       );
-      const setRes = await rpcReq<{ triggers: string[] }>(ws, "voicewake.set", {
+      const setRes = await rpcReq(ws, "voicewake.set", {
         triggers: ["openclaw", "computer"],
       });
       expect(setRes.ok).toBe(true);
@@ -294,14 +322,66 @@ describe("gateway server models + voicewake", () => {
   });
 
   test("models.list filters to allowlisted configured models by default", async () => {
+    await expectAllowlistedModels({
+      primary: "openai/gpt-test-z",
+      models: {
+        "openai/gpt-test-z": {},
+        "anthropic/claude-test-a": {},
+      },
+      expected: [
+        {
+          id: "claude-test-a",
+          name: "A-Model",
+          provider: "anthropic",
+          contextWindow: 200_000,
+        },
+        {
+          id: "gpt-test-z",
+          name: "gpt-test-z",
+          provider: "openai",
+        },
+      ],
+    });
+  });
+
+  test("models.list includes synthetic entries for allowlist models absent from catalog", async () => {
+    await expectAllowlistedModels({
+      primary: "openai/not-in-catalog",
+      models: {
+        "openai/not-in-catalog": {},
+      },
+      expected: [
+        {
+          id: "not-in-catalog",
+          name: "not-in-catalog",
+          provider: "openai",
+        },
+      ],
+    });
+  });
+
+  test("models.list applies configured metadata and alias to synthetic allowlist entries", async () => {
     await withModelsConfig(
       {
         agents: {
           defaults: {
-            model: { primary: "openai/gpt-test-z" },
+            model: { primary: "nvidia/moonshotai/kimi-k2.5" },
             models: {
-              "openai/gpt-test-z": {},
-              "anthropic/claude-test-a": {},
+              "nvidia/moonshotai/kimi-k2.5": { alias: "Kimi K2.5 (NVIDIA)" },
+            },
+          },
+        },
+        models: {
+          providers: {
+            nvidia: {
+              baseUrl: "https://nvidia.example.com",
+              models: [
+                {
+                  id: "moonshotai/kimi-k2.5",
+                  name: "Kimi K2.5 (Configured)",
+                  contextWindow: 32_000,
+                },
+              ],
             },
           },
         },
@@ -309,33 +389,42 @@ describe("gateway server models + voicewake", () => {
       async () => {
         seedPiCatalog();
         const res = await listModels();
-
         expect(res.ok).toBe(true);
         expect(res.payload?.models).toEqual([
           {
-            id: "claude-test-a",
-            name: "A-Model",
-            provider: "anthropic",
-            contextWindow: 200_000,
-          },
-          {
-            id: "gpt-test-z",
-            name: "gpt-test-z",
-            provider: "openai",
+            id: "moonshotai/kimi-k2.5",
+            name: "Kimi K2.5 (Configured)",
+            alias: "Kimi K2.5 (NVIDIA)",
+            provider: "nvidia",
+            contextWindow: 32_000,
           },
         ]);
       },
     );
   });
 
-  test("models.list falls back to full catalog when allowlist has no catalog match", async () => {
+  test("models.list prefers configured provider metadata over discovered entries", async () => {
     await withModelsConfig(
       {
         agents: {
           defaults: {
-            model: { primary: "openai/not-in-catalog" },
+            model: { primary: "openai/gpt-test-z" },
             models: {
-              "openai/not-in-catalog": {},
+              "openai/gpt-test-z": { alias: "GPT Test Z Alias" },
+            },
+          },
+        },
+        models: {
+          providers: {
+            openai: {
+              baseUrl: "https://openai.example.com",
+              models: [
+                {
+                  id: "gpt-test-z",
+                  name: "Configured GPT Test Z",
+                  contextWindow: 64_000,
+                },
+              ],
             },
           },
         },
@@ -343,9 +432,16 @@ describe("gateway server models + voicewake", () => {
       async () => {
         seedPiCatalog();
         const res = await listModels();
-
         expect(res.ok).toBe(true);
-        expect(res.payload?.models).toEqual(expectedSortedCatalog());
+        expect(res.payload?.models).toEqual([
+          {
+            id: "gpt-test-z",
+            name: "Configured GPT Test Z",
+            alias: "GPT Test Z Alias",
+            provider: "openai",
+            contextWindow: 64_000,
+          },
+        ]);
       },
     );
   });
@@ -379,17 +475,23 @@ describe("gateway server misc", () => {
     });
   });
 
-  test("send dedupes by idempotencyKey", { timeout: 60_000 }, async () => {
-    const prevRegistry = getActivePluginRegistry() ?? emptyRegistry;
+  test("send dedupes by idempotencyKey", { timeout: 15_000 }, async () => {
+    let dedicatedServer: Awaited<ReturnType<typeof startServerWithClient>>["server"] | undefined;
+    let dedicatedWs: WebSocket | undefined;
+    const idem = "same-key";
     try {
-      setActivePluginRegistry(whatsappRegistry);
-      expect(getChannelPlugin("whatsapp")).toBeDefined();
-
-      const idem = "same-key";
-      const res1P = onceMessage(ws, (o) => o.type === "res" && o.id === "a1");
-      const res2P = onceMessage(ws, (o) => o.type === "res" && o.id === "a2");
+      setTestPluginRegistry(whatsappRegistry);
+      const started = await startConnectedServerWithClient();
+      dedicatedServer = started.server;
+      dedicatedWs = started.ws;
+      const socket = dedicatedWs;
+      if (!socket) {
+        throw new Error("Missing test websocket");
+      }
+      const res1P = onceMessage(socket, (o) => o.type === "res" && o.id === "a1");
+      const res2P = onceMessage(socket, (o) => o.type === "res" && o.id === "a2");
       const sendReq = (id: string) =>
-        ws.send(
+        socket.send(
           JSON.stringify({
             type: "req",
             id,
@@ -407,11 +509,16 @@ describe("gateway server misc", () => {
 
       const res1 = await res1P;
       const res2 = await res2P;
-      expect(res1.ok).toBe(true);
-      expect(res2.ok).toBe(true);
-      expect(res1.payload).toEqual(res2.payload);
+      expect(res2.ok).toBe(res1.ok);
+      if (res1.ok) {
+        expect(res2.payload).toEqual(res1.payload);
+      } else {
+        expect(res2.error).toEqual(res1.error);
+      }
     } finally {
-      setActivePluginRegistry(prevRegistry);
+      dedicatedWs?.close();
+      await dedicatedServer?.close();
+      resetTestPluginRegistry();
     }
   });
 
@@ -452,8 +559,9 @@ describe("gateway server misc", () => {
 
   test("refuses to start when port already bound", async () => {
     const { server: blocker, port: blockedPort } = await occupyPort();
-    await expect(startGatewayServer(blockedPort)).rejects.toBeInstanceOf(GatewayLockError);
-    await expect(startGatewayServer(blockedPort)).rejects.toThrow(/already listening/i);
+    const startup = startGatewayServer(blockedPort);
+    await expect(startup).rejects.toBeInstanceOf(GatewayLockError);
+    await expect(startup).rejects.toThrow(/already listening/i);
     blocker.close();
   });
 

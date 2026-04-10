@@ -8,8 +8,9 @@ title: "Nebius Token Factory"
 
 # Nebius Token Factory
 
-Nebius Token Factory exposes an OpenAI-compatible endpoint. OpenClaw can auto‑discover
-models from the API and wire the provider without manual model lists.
+Nebius Token Factory exposes an OpenAI-compatible endpoint. OpenClaw registers
+it as a bundled provider plugin, discovers models from the API when auth is
+available, and falls back to a bundled default model when discovery fails.
 
 ## Quick start
 
@@ -31,7 +32,7 @@ openclaw onboard
 ## Models and defaults
 
 - Base URL: `https://api.tokenfactory.nebius.com/v1`
-- Default model: `nebius-token-factory/zai-org/GLM-4.7-FP8`
+- Default model: `nebius-token-factory/Qwen/Qwen3.5-397B-A17B`
 - Models auto-populate from `GET /models`; OpenClaw falls back to the default
   if discovery fails.
 

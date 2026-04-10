@@ -1,0 +1,28 @@
+{
+  "id": "nebius-token-factory",
+  "enabledByDefault": true,
+  "providers": ["nebius-token-factory"],
+  "providerAuthEnvVars": {
+    "nebius-token-factory": ["NEBIUS_TOKEN_FACTORY", "NEBIUS_API_KEY"]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "nebius-token-factory",
+      "method": "api-key",
+      "choiceId": "nebius-token-factory-api-key",
+      "choiceLabel": "Nebius Token Factory API key",
+      "groupId": "nebius-token-factory",
+      "groupLabel": "Nebius Token Factory",
+      "groupHint": "Qwen 3.5",
+      "optionKey": "nebiusTokenFactoryApiKey",
+      "cliFlag": "--nebius-token-factory-api-key",
+      "cliOption": "--nebius-token-factory-api-key <key>",
+      "cliDescription": "Nebius Token Factory API key"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

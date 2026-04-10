@@ -531,7 +531,36 @@ Kimi Coding uses Moonshot AI's Anthropic-compatible endpoint:
 }
 ```
 
+### Nebius Token Factory
+
+- Provider: `nebius-token-factory`
+- Auth: `NEBIUS_TOKEN_FACTORY` (preferred; `NEBIUS_API_KEY` is also accepted)
+- Example model: `nebius-token-factory/Qwen/Qwen3.5-397B-A17B`
+- Base URL: `https://api.tokenfactory.nebius.com/v1`
+- CLI: `openclaw onboard --auth-choice nebius-token-factory-api-key --nebius-token-factory-api-key "$NEBIUS_TOKEN_FACTORY"`
+
+```json5
+{
+  agents: {
+    defaults: { model: { primary: "nebius-token-factory/Qwen/Qwen3.5-397B-A17B" } },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      "nebius-token-factory": {
+        api: "openai-completions",
+        baseUrl: "https://api.tokenfactory.nebius.com/v1",
+        apiKey: "${NEBIUS_TOKEN_FACTORY}",
+      },
+    },
+  },
+}
+```
+
 Legacy `kimi/k2p5` remains accepted as a compatibility model id.
+
+OpenClaw queries `GET /models` when Nebius auth is available and falls back to
+the bundled Qwen 3.5 catalog entry if discovery fails.
 
 ### Volcano Engine (Doubao)
 

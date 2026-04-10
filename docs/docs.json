@@ -1256,6 +1256,7 @@
                   "providers/minimax",
                   "providers/mistral",
                   "providers/moonshot",
+                  "providers/nebius-token-factory",
                   "providers/nvidia",
                   "providers/ollama",
                   "providers/openai",

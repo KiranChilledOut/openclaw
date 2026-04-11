@@ -133,6 +133,9 @@ export function acquireLocalHeavyCheckLockSync(params) {
   let lastProgressAt = 0;
 
   fs.mkdirSync(locksDir, { recursive: true });
+  if (!params.lockName) {
+    cleanupLegacyLockDirs(locksDir, staleLockMs);
+  }
 
   for (;;) {
     try {
@@ -210,6 +213,20 @@ export function resolveGitCommonDir(cwd) {
   return path.join(cwd, ".git");
 }
 
+function cleanupLegacyLockDirs(locksDir, staleLockMs) {
+  for (const legacyLockName of ["test"]) {
+    const legacyLockDir = path.join(locksDir, `${legacyLockName}.lock`);
+    if (!fs.existsSync(legacyLockDir)) {
+      continue;
+    }
+
+    const owner = readOwnerFile(path.join(legacyLockDir, "owner.json"));
+    if (shouldReclaimLock({ owner, lockDir: legacyLockDir, staleLockMs })) {
+      fs.rmSync(legacyLockDir, { recursive: true, force: true });
+    }
+  }
+}
+
 function insertBeforeSeparator(args, ...items) {
   if (items.length > 0 && hasFlag(args, items[0])) {
     return;
@@ -228,7 +245,9 @@ function readLocalCheckMode(env) {
   if (raw === "full" || raw === "fast") {
     return "full";
   }
-  return "auto";
+  // Keep local heavy checks conservative by default. Developers can still opt
+  // into full-speed runs explicitly with OPENCLAW_LOCAL_CHECK_MODE=full.
+  return "throttled";
 }
 
 function resolveHostResources(hostResources) {

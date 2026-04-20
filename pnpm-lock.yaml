@@ -869,6 +869,12 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  extensions/nebius-token-factory:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   extensions/nextcloud-talk:
     devDependencies:
       '@openclaw/plugin-sdk':

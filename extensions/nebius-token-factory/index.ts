@@ -7,8 +7,12 @@ import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/text-runt
 import {
   applyNebiusTokenFactoryConfig,
   NEBIUS_TOKEN_FACTORY_DEFAULT_MODEL_REF,
+  normalizeNebiusTokenFactoryProviderConfig,
 } from "./onboard.js";
-import { buildNebiusTokenFactoryProvider } from "./provider-catalog.js";
+import {
+  buildNebiusTokenFactoryCatalogEntries,
+  buildNebiusTokenFactoryProvider,
+} from "./provider-catalog.js";
 
 const PROVIDER_ID = "nebius-token-factory";
 const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
@@ -77,6 +81,14 @@ export default defineSingleProviderPluginEntry({
         };
       },
     },
+    augmentModelCatalog: ({ config, env, agentDir }) =>
+      buildNebiusTokenFactoryCatalogEntries({
+        config,
+        env,
+        agentDir,
+      }),
+    normalizeConfig: ({ providerConfig }) =>
+      normalizeNebiusTokenFactoryProviderConfig(providerConfig),
     ...OPENAI_COMPATIBLE_REPLAY_HOOKS,
   },
 });

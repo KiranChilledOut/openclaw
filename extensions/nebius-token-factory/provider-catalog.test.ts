@@ -1,5 +1,10 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { upsertAuthProfile } from "openclaw/plugin-sdk/provider-auth";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildNebiusTokenFactoryCatalogEntries,
   buildNebiusTokenFactoryModelDefinition,
   buildNebiusTokenFactoryProvider,
   NEBIUS_TOKEN_FACTORY_BASE_URL,
@@ -90,5 +95,55 @@ describe("Nebius Token Factory provider catalog", () => {
         NEBIUS_TOKEN_FACTORY_DEFAULT_MODEL_ID,
       ]);
     });
+  });
+
+  it("builds picker catalog entries from stored Nebius auth profiles", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "nebius-token-factory-"));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: NEBIUS_TOKEN_FACTORY_DEFAULT_MODEL_ID },
+          { id: "deepseek-ai/DeepSeek-V3.2" },
+        ],
+      }),
+    } as Response);
+
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "nebius-token-factory:default",
+        credential: {
+          type: "api_key",
+          provider: "nebius-token-factory",
+          key: "nebius-test-key",
+        },
+      });
+
+      await withLiveDiscovery(fetchMock, async () => {
+        const entries = await buildNebiusTokenFactoryCatalogEntries({
+          agentDir,
+          config: {
+            models: {
+              providers: {
+                "nebius-token-factory": {
+                  baseUrl: NEBIUS_TOKEN_FACTORY_BASE_URL,
+                  api: "openai-completions",
+                  models: [],
+                },
+              },
+            },
+          },
+          env: {},
+        });
+
+        expect(entries.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
+          "nebius-token-factory/Qwen/Qwen3.5-397B-A17B",
+          "nebius-token-factory/deepseek-ai/DeepSeek-V3.2",
+        ]);
+      });
+    } finally {
+      await rm(agentDir, { force: true, recursive: true });
+    }
   });
 });

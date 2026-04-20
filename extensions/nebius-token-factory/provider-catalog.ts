@@ -1,3 +1,15 @@
+import {
+  ensureAuthProfileStore,
+  isProviderApiKeyConfigured,
+  listProfilesForProvider,
+  normalizeOptionalSecretInput,
+  resolveEnvApiKey,
+  type OpenClawConfig,
+} from "openclaw/plugin-sdk/provider-auth";
+import {
+  readConfiguredProviderCatalogEntries,
+  type ConfiguredProviderCatalogEntry,
+} from "openclaw/plugin-sdk/provider-catalog-shared";
 import type {
   ModelDefinitionConfig,
   ModelProviderConfig,
@@ -12,6 +24,7 @@ export const NEBIUS_TOKEN_FACTORY_DEFAULT_MODEL_ID = "Qwen/Qwen3.5-397B-A17B";
 const NEBIUS_TOKEN_FACTORY_DEFAULT_MODEL_NAME = "Qwen 3.5 397B A17B";
 const NEBIUS_TOKEN_FACTORY_DEFAULT_CONTEXT_WINDOW = 262144;
 const NEBIUS_TOKEN_FACTORY_DEFAULT_MAX_TOKENS = 65536;
+const PROVIDER_ID = "nebius-token-factory";
 const NEBIUS_TOKEN_FACTORY_DEFAULT_COST = {
   input: 0,
   output: 0,
@@ -26,6 +39,41 @@ type OpenAiModelEntry = {
 type OpenAiModelsResponse = {
   data?: OpenAiModelEntry[];
 };
+
+function findNebiusProviderConfig(
+  config: OpenClawConfig | undefined,
+): ModelProviderConfig | undefined {
+  const providers = config?.models?.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  const providerEntry = Object.entries(providers).find(
+    ([providerId]) =>
+      normalizeLowercaseStringOrEmpty(providerId) === normalizeLowercaseStringOrEmpty(PROVIDER_ID),
+  );
+  return providerEntry?.[1];
+}
+
+function resolveNebiusProfileApiKey(agentDir?: string): string | undefined {
+  const trimmedAgentDir = normalizeOptionalString(agentDir);
+  if (!trimmedAgentDir) {
+    return undefined;
+  }
+  const store = ensureAuthProfileStore(trimmedAgentDir, {
+    allowKeychainPrompt: false,
+  });
+  for (const profileId of listProfilesForProvider(store, PROVIDER_ID)) {
+    const credential = store.profiles[profileId];
+    if (credential?.type !== "api_key") {
+      continue;
+    }
+    const apiKey = normalizeOptionalSecretInput(credential.key);
+    if (apiKey) {
+      return apiKey;
+    }
+  }
+  return undefined;
+}
 
 function isNebiusDefaultModel(modelId: string): boolean {
   return normalizeLowercaseStringOrEmpty(modelId) ===
@@ -125,4 +173,78 @@ export async function buildNebiusTokenFactoryProvider(
     api: "openai-completions",
     models,
   };
+}
+
+function toNebiusCatalogEntry(model: ModelDefinitionConfig): ConfiguredProviderCatalogEntry {
+  return {
+    provider: PROVIDER_ID,
+    id: model.id,
+    name: normalizeOptionalString(model.name) || model.id,
+    ...(typeof model.contextWindow === "number" && model.contextWindow > 0
+      ? { contextWindow: model.contextWindow }
+      : {}),
+    ...(typeof model.reasoning === "boolean" ? { reasoning: model.reasoning } : {}),
+    ...(Array.isArray(model.input) && model.input.length > 0 ? { input: model.input } : {}),
+  };
+}
+
+function dedupeNebiusCatalogEntries(
+  entries: ReadonlyArray<ConfiguredProviderCatalogEntry>,
+): ConfiguredProviderCatalogEntry[] {
+  const deduped: ConfiguredProviderCatalogEntry[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const key = `${normalizeLowercaseStringOrEmpty(entry.provider)}::${normalizeLowercaseStringOrEmpty(entry.id)}`;
+    if (!entry.id || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped;
+}
+
+export function resolveNebiusTokenFactoryCatalogApiKey(params: {
+  config?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+}): string | undefined {
+  const envApiKey = resolveEnvApiKey(PROVIDER_ID, params.env ?? process.env)?.apiKey;
+  if (envApiKey) {
+    return envApiKey;
+  }
+  const configuredApiKey = normalizeOptionalSecretInput(findNebiusProviderConfig(params.config)?.apiKey);
+  if (configuredApiKey) {
+    return configuredApiKey;
+  }
+  return resolveNebiusProfileApiKey(params.agentDir);
+}
+
+export async function buildNebiusTokenFactoryCatalogEntries(params: {
+  config?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+}): Promise<ConfiguredProviderCatalogEntry[]> {
+  const configuredEntries = readConfiguredProviderCatalogEntries({
+    config: params.config,
+    providerId: PROVIDER_ID,
+  });
+  const hasConfiguredProvider = Boolean(findNebiusProviderConfig(params.config));
+  const apiKey = resolveNebiusTokenFactoryCatalogApiKey(params);
+  const hasConfiguredAuth =
+    Boolean(apiKey) ||
+    isProviderApiKeyConfigured({
+      provider: PROVIDER_ID,
+      agentDir: params.agentDir,
+    });
+
+  if (!hasConfiguredProvider && !hasConfiguredAuth && configuredEntries.length === 0) {
+    return [];
+  }
+
+  const provider = await buildNebiusTokenFactoryProvider(apiKey);
+  const discoveredEntries = Array.isArray(provider.models)
+    ? provider.models.map((model) => toNebiusCatalogEntry(model))
+    : [];
+  return dedupeNebiusCatalogEntries([...configuredEntries, ...discoveredEntries]);
 }

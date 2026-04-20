@@ -230,7 +230,7 @@ describe("deliverOutboundPayloads", () => {
       cfg: {},
       channel: "whatsapp",
       to: "+1555",
-      payloads: [{ text: "hello" }],
+      payloads: [{ text: "hello", mediaUrl: "file:///tmp/policy.png" }],
       deps: { whatsapp: sendWhatsApp },
       session: {
         key: "agent:main:whatsapp:group:ops",
@@ -259,7 +259,7 @@ describe("deliverOutboundPayloads", () => {
       cfg: {},
       channel: "whatsapp",
       to: "+1555",
-      payloads: [{ text: "hello" }],
+      payloads: [{ text: "hello", mediaUrl: "file:///tmp/policy.png" }],
       deps: { whatsapp: sendWhatsApp },
       session: {
         key: "agent:main:whatsapp:group:ops",
@@ -293,7 +293,7 @@ describe("deliverOutboundPayloads", () => {
       channel: "whatsapp",
       to: "+1555",
       accountId: "destination-account",
-      payloads: [{ text: "hello" }],
+      payloads: [{ text: "hello", mediaUrl: "file:///tmp/policy.png" }],
       deps: { whatsapp: sendWhatsApp },
       session: {
         key: "agent:main:whatsapp:group:ops",
@@ -309,6 +309,29 @@ describe("deliverOutboundPayloads", () => {
         requesterSenderId: "attacker",
       }),
     );
+    resolveMediaAccessSpy.mockRestore();
+  });
+
+  it("skips media access policy for text-only delivery", async () => {
+    const resolveMediaAccessSpy = vi.spyOn(
+      mediaCapabilityModule,
+      "resolveAgentScopedOutboundMediaAccess",
+    );
+    const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "w4", toJid: "jid" });
+
+    await deliverOutboundPayloads({
+      cfg: {},
+      channel: "whatsapp",
+      to: "+1555",
+      payloads: [{ text: "hello" }],
+      deps: { whatsapp: sendWhatsApp },
+      session: {
+        key: "agent:main:whatsapp:group:ops",
+        requesterSenderId: "attacker",
+      },
+    });
+
+    expect(resolveMediaAccessSpy).not.toHaveBeenCalled();
     resolveMediaAccessSpy.mockRestore();
   });
 
@@ -835,6 +858,36 @@ describe("deliverOutboundPayloads", () => {
     expect(queueMocks.failDelivery).toHaveBeenCalledWith(
       "mock-queue-id",
       "partial delivery failure (bestEffort)",
+    );
+  });
+
+  it("writes raw payloads to the queue before normalization", async () => {
+    const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "w-raw", toJid: "jid" });
+    const rawPayloads: DeliverOutboundPayload[] = [
+      { text: "NO_REPLY" },
+      { text: '{"action":"NO_REPLY"}' },
+      { text: "caption\nMEDIA:https://x.test/a.png" },
+      { text: "NO_REPLY", mediaUrl: " https://x.test/b.png " },
+    ];
+
+    await deliverOutboundPayloads({
+      cfg: whatsappChunkConfig,
+      channel: "whatsapp",
+      to: "+1555",
+      payloads: rawPayloads,
+      deps: { whatsapp: sendWhatsApp },
+    });
+
+    expect(queueMocks.enqueueDelivery).toHaveBeenCalledTimes(1);
+    expect(queueMocks.enqueueDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payloads: [
+          { text: "NO_REPLY" },
+          { text: '{"action":"NO_REPLY"}' },
+          { text: "caption\nMEDIA:https://x.test/a.png" },
+          { text: "NO_REPLY", mediaUrl: " https://x.test/b.png " },
+        ],
+      }),
     );
   });
 

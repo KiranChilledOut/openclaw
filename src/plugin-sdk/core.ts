@@ -1,3 +1,4 @@
+import type { ResolvedConfiguredAcpBinding } from "../acp/persistent-bindings.types.js";
 import { buildChatChannelMetaById } from "../channels/chat-meta-shared.js";
 import type { ChatChannelId } from "../channels/ids.js";
 import { emptyChannelConfigSchema } from "../channels/plugins/config-schema.js";
@@ -24,6 +25,8 @@ import type { ReplyToMode } from "../config/types.base.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildOutboundBaseSessionKey } from "../infra/outbound/base-session-key.js";
 import type { OutboundDeliveryResult } from "../infra/outbound/deliver.js";
+import { resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
+import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { OpenClawPluginApi } from "../plugins/types.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
@@ -78,13 +81,13 @@ export type {
   ProviderTransportTurnState,
   ProviderToolSchemaDiagnostic,
   ProviderResolveUsageAuthContext,
-  ProviderRuntimeModel,
   ProviderThinkingPolicyContext,
   ProviderValidateReplayTurnsContext,
   ProviderWebSocketSessionPolicy,
   ProviderWrapStreamFnContext,
   SpeechProviderPlugin,
 } from "./plugin-entry.js";
+export type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 export type { OpenClawPluginToolContext, OpenClawPluginToolFactory } from "../plugins/types.js";
 export type {
   MemoryPluginCapability,
@@ -99,7 +102,7 @@ export type {
 export type { OpenClawConfig } from "../config/config.js";
 export type { OutboundIdentity } from "../infra/outbound/identity.js";
 export type { HistoryEntry } from "../auto-reply/reply/history.js";
-export type { ReplyPayload } from "../auto-reply/types.js";
+export type { ReplyPayload } from "../auto-reply/reply-payload.js";
 export type { AllowlistMatch } from "../channels/allowlist-match.js";
 export type {
   BaseProbeResult,
@@ -207,8 +210,15 @@ export {
 export { parseStrictPositiveInteger } from "../infra/parse-finite-number.js";
 export { isTrustedProxyAddress, resolveClientIp } from "../gateway/net.js";
 export { formatZonedTimestamp } from "../infra/format-time/format-datetime.js";
-export { ensureConfiguredAcpBindingReady } from "../acp/persistent-bindings.lifecycle.js";
 export { resolveConfiguredAcpBindingRecord } from "../acp/persistent-bindings.resolve.js";
+
+export async function ensureConfiguredAcpBindingReady(params: {
+  cfg: OpenClawConfig;
+  configuredBinding: ResolvedConfiguredAcpBinding | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const runtime = await import("../acp/persistent-bindings.lifecycle.js");
+  return runtime.ensureConfiguredAcpBindingReady(params);
+}
 
 export { resolveTailnetHostWithRunner } from "../shared/tailscale-status.js";
 export type {
@@ -226,11 +236,22 @@ export type ChannelOutboundSessionRouteParams = Parameters<
   NonNullable<ChannelMessagingAdapter["resolveOutboundSessionRoute"]>
 >[0];
 
-var cachedSdkChatChannelMeta: ReturnType<typeof buildChatChannelMetaById> | undefined;
+var cachedSdkChatChannelMeta:
+  | {
+      cacheKey: string;
+      metaById: ReturnType<typeof buildChatChannelMetaById>;
+    }
+  | undefined;
 
 function resolveSdkChatChannelMeta(id: string) {
-  cachedSdkChatChannelMeta ??= buildChatChannelMetaById();
-  return cachedSdkChatChannelMeta[id];
+  const cacheKey = resolveBundledPluginsDir(process.env) ?? "";
+  if (cachedSdkChatChannelMeta?.cacheKey !== cacheKey) {
+    cachedSdkChatChannelMeta = {
+      cacheKey,
+      metaById: buildChatChannelMetaById(),
+    };
+  }
+  return cachedSdkChatChannelMeta.metaById[id];
 }
 
 export function getChatChannelMeta(id: ChatChannelId): ChannelMeta {
@@ -434,6 +455,7 @@ type ChatChannelSecurityOptions<TResolvedAccount extends { accountId?: string | 
     approveChannelId?: string;
     approveHint?: string;
     normalizeEntry?: (raw: string) => string;
+    inheritSharedDefaultsFromDefaultAccount?: boolean;
   };
   collectWarnings?: ChannelSecurityAdapter<TResolvedAccount>["collectWarnings"];
   collectAuditFindings?: ChannelSecurityAdapter<TResolvedAccount>["collectAuditFindings"];
@@ -542,6 +564,8 @@ function resolveChatChannelSecurity<TResolvedAccount extends { accountId?: strin
         approveChannelId: security.dm.approveChannelId,
         approveHint: security.dm.approveHint,
         normalizeEntry: security.dm.normalizeEntry,
+        inheritSharedDefaultsFromDefaultAccount:
+          security.dm.inheritSharedDefaultsFromDefaultAccount,
       }),
     ...(security.collectWarnings ? { collectWarnings: security.collectWarnings } : {}),
     ...(security.collectAuditFindings

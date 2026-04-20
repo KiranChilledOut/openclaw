@@ -1,10 +1,10 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import type {
   ReplyDispatchKind,
   ReplyDispatcher,
 } from "../auto-reply/reply/reply-dispatcher.types.js";
 import type { FinalizedMsgContext } from "../auto-reply/templating.js";
-import type { ReplyPayload } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { TtsAutoMode } from "../config/types.tts.js";
 import {
@@ -33,6 +33,7 @@ export type {
   PluginHookBeforeAgentStartEvent,
   PluginHookBeforeAgentStartOverrideResult,
   PluginHookBeforeAgentStartResult,
+  PluginHookBeforeModelResolveAttachment,
   PluginHookBeforeModelResolveEvent,
   PluginHookBeforeModelResolveResult,
   PluginHookBeforePromptBuildEvent,
@@ -421,6 +422,12 @@ export type PluginHookSubagentSpawningResult =
   | {
       status: "ok";
       threadBindingReady?: boolean;
+      deliveryOrigin?: {
+        channel?: string;
+        accountId?: string;
+        to?: string;
+        threadId?: string | number;
+      };
     }
   | {
       status: "error";

@@ -7,6 +7,8 @@ const {
   buildVitestRunPlans,
   createVitestRunSpecs,
   parseTestProjectsArgs,
+  resolveChangedTargetArgs,
+  resolveChangedTestTargetPlan,
   resolveParallelFullSuiteConcurrency,
 } = (await import("../../scripts/test-projects.test-support.mjs")) as unknown as {
   applyParallelVitestCachePaths: (
@@ -35,6 +37,7 @@ const {
   buildVitestRunPlans: (
     args: string[],
     cwd?: string,
+    listChangedPaths?: (baseRef: string, cwd: string) => string[],
   ) => Array<{
     config: string;
     forwardedArgs: string[];
@@ -64,7 +67,26 @@ const {
     targetArgs: string[];
     watchMode: boolean;
   };
-  resolveParallelFullSuiteConcurrency: (specCount: number, env?: NodeJS.ProcessEnv) => number;
+  resolveChangedTargetArgs: (
+    args: string[],
+    cwd?: string,
+    listChangedPaths?: (baseRef: string, cwd: string) => string[],
+  ) => string[] | null;
+  resolveChangedTestTargetPlan: (
+    changedPaths: string[],
+  ) =>
+    | { mode: "none"; targets: string[] }
+    | { mode: "targets"; targets: string[] }
+    | { mode: "broad"; targets: string[] };
+  resolveParallelFullSuiteConcurrency: (
+    specCount: number,
+    env?: NodeJS.ProcessEnv,
+    hostInfo?: {
+      cpuCount?: number;
+      loadAverage1m?: number;
+      totalMemoryBytes?: number;
+    },
+  ) => number;
 };
 
 const VITEST_NODE_PREFIX = [
@@ -486,9 +508,17 @@ describe("test-projects args", () => {
 
   it("uses a bounded local default for full-suite project parallelism", () => {
     expect(
-      resolveParallelFullSuiteConcurrency(58, {
-        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: "1",
-      }),
+      resolveParallelFullSuiteConcurrency(
+        58,
+        {
+          OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: "1",
+        },
+        {
+          cpuCount: 8,
+          loadAverage1m: 0,
+          totalMemoryBytes: 16 * 1024 ** 3,
+        },
+      ),
     ).toBe(4);
   });
 
@@ -769,12 +799,12 @@ describe("test-projects args", () => {
     ]);
   });
 
-  it("routes direct channel extension file targets to the channels config", () => {
+  it("routes direct Discord extension file targets to the Discord config", () => {
     expect(
       buildVitestRunPlans(["extensions/discord/src/monitor/message-handler.preflight.test.ts"]),
     ).toEqual([
       {
-        config: "test/vitest/vitest.extension-channels.config.ts",
+        config: "test/vitest/vitest.extension-discord.config.ts",
         forwardedArgs: [],
         includePatterns: ["extensions/discord/src/monitor/message-handler.preflight.test.ts"],
         watchMode: false,
@@ -793,10 +823,10 @@ describe("test-projects args", () => {
     ]);
   });
 
-  it("routes line extension targets to the extension channel config", () => {
+  it("routes line extension targets to the line config", () => {
     expect(buildVitestRunPlans(["extensions/line/src/send.test.ts"])).toEqual([
       {
-        config: "test/vitest/vitest.extension-channels.config.ts",
+        config: "test/vitest/vitest.extension-line.config.ts",
         forwardedArgs: [],
         includePatterns: ["extensions/line/src/send.test.ts"],
         watchMode: false,
@@ -815,10 +845,10 @@ describe("test-projects args", () => {
     ]);
   });
 
-  it("routes direct provider extension file targets to the extension providers config", () => {
+  it("routes direct OpenAI provider extension file targets to the OpenAI provider config", () => {
     expect(buildVitestRunPlans(["extensions/openai/openai-codex-provider.test.ts"])).toEqual([
       {
-        config: "test/vitest/vitest.extension-providers.config.ts",
+        config: "test/vitest/vitest.extension-provider-openai.config.ts",
         forwardedArgs: [],
         includePatterns: ["extensions/openai/openai-codex-provider.test.ts"],
         watchMode: false,
@@ -832,6 +862,72 @@ describe("test-projects args", () => {
         config: "test/vitest/vitest.extensions.config.ts",
         forwardedArgs: [],
         includePatterns: ["extensions/firecrawl/index.test.ts"],
+        watchMode: false,
+      },
+    ]);
+  });
+
+  it("keeps docs-only changed runs empty instead of widening to the full suite", () => {
+    const changedPaths = ["docs/help/testing.md", "AGENTS.md"];
+
+    expect(resolveChangedTestTargetPlan(changedPaths)).toEqual({
+      mode: "targets",
+      targets: [],
+    });
+    expect(
+      resolveChangedTargetArgs(["--changed=origin/main"], process.cwd(), () => changedPaths),
+    ).toEqual([]);
+    expect(
+      buildVitestRunPlans(["--changed=origin/main"], process.cwd(), () => changedPaths),
+    ).toEqual([]);
+  });
+
+  it("keeps core test-only changes on their owning test lane", () => {
+    const changedPaths = ["src/auto-reply/reply/commands-approve.test.ts"];
+
+    expect(
+      buildVitestRunPlans(["--changed=origin/main"], process.cwd(), () => changedPaths),
+    ).toEqual([
+      {
+        config: "test/vitest/vitest.auto-reply.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["src/auto-reply/reply/commands-approve.test.ts"],
+        watchMode: false,
+      },
+    ]);
+  });
+
+  it("widens extension-facing core contract changes to extension tests", () => {
+    const changedPaths = ["src/plugin-sdk/core.ts"];
+    const plans = buildVitestRunPlans(["--changed=origin/main"], process.cwd(), () => changedPaths);
+
+    expect(
+      resolveChangedTargetArgs(["--changed=origin/main"], process.cwd(), () => changedPaths),
+    ).toEqual(["src/plugin-sdk/core.ts", "extensions"]);
+    expect(plans[0]).toEqual({
+      config: "test/vitest/vitest.plugin-sdk.config.ts",
+      forwardedArgs: [],
+      includePatterns: ["src/plugin-sdk/**/*.test.ts"],
+      watchMode: false,
+    });
+    expect(plans.map((plan) => plan.config)).toContain(
+      "test/vitest/vitest.extension-discord.config.ts",
+    );
+    expect(plans.map((plan) => plan.config)).toContain(
+      "test/vitest/vitest.extension-providers.config.ts",
+    );
+  });
+
+  it("keeps extension production changes on the owning extension lane", () => {
+    const changedPaths = ["extensions/discord/src/monitor/message-handler.ts"];
+
+    expect(
+      buildVitestRunPlans(["--changed=origin/main"], process.cwd(), () => changedPaths),
+    ).toEqual([
+      {
+        config: "test/vitest/vitest.extension-discord.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["extensions/discord/src/monitor/**/*.test.ts"],
         watchMode: false,
       },
     ]);
@@ -853,7 +949,7 @@ describe("test-projects args", () => {
         watchMode: false,
       },
       {
-        config: "test/vitest/vitest.extension-channels.config.ts",
+        config: "test/vitest/vitest.extension-discord.config.ts",
         forwardedArgs: ["-t", "mention"],
         includePatterns: ["extensions/discord/src/monitor/message-handler.preflight.test.ts"],
         watchMode: false,
@@ -870,7 +966,7 @@ describe("test-projects args", () => {
       ...VITEST_NODE_PREFIX,
       "run",
       "--config",
-      "test/vitest/vitest.extension-channels.config.ts",
+      "test/vitest/vitest.extension-discord.config.ts",
     ]);
     expect(spec?.includePatterns).toEqual([
       "extensions/discord/src/monitor/message-handler.preflight.test.ts",

@@ -3,7 +3,6 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { analyzeShellCommand } from "../infra/exec-approvals-analysis.js";
 import { type ExecHost, loadExecApprovals, maxAsk, minSecurity } from "../infra/exec-approvals.js";
 import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
-import { SafeOpenError, readFileWithinRoot } from "../infra/fs-safe.js";
 import { sanitizeHostExecEnvWithDiagnostics } from "../infra/host-env-security.js";
 import {
   getShellPathFromLoginShell,
@@ -16,6 +15,7 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "../shared/string-coerce.js";
+import { normalizeDeliveryContext } from "../utils/delivery-context.js";
 import { splitShellArgs } from "../utils/shell-argv.js";
 import { markBackgrounded } from "./bash-process-registry.js";
 import { describeExecTool } from "./bash-tools.descriptions.js";
@@ -117,7 +117,19 @@ function getNodeErrorCode(error: unknown): string | undefined {
   return String((error as { code?: unknown }).code);
 }
 
-function shouldSkipScriptPreflightPathError(error: unknown): boolean {
+type FsSafeModule = typeof import("../infra/fs-safe.js");
+
+let fsSafeModulePromise: Promise<FsSafeModule> | undefined;
+
+async function loadFsSafeModule(): Promise<FsSafeModule> {
+  fsSafeModulePromise ??= import("../infra/fs-safe.js");
+  return await fsSafeModulePromise;
+}
+
+function shouldSkipScriptPreflightPathError(
+  error: unknown,
+  SafeOpenError: FsSafeModule["SafeOpenError"],
+): boolean {
   if (error instanceof SafeOpenError) {
     return true;
   }
@@ -950,6 +962,7 @@ async function validateScriptFileForShellBleed(params: {
     return;
   }
 
+  const { SafeOpenError, readFileWithinRoot } = await loadFsSafeModule();
   for (const relOrAbsPath of target.relOrAbsPaths) {
     const absPath = path.isAbsolute(relOrAbsPath)
       ? path.resolve(relOrAbsPath)
@@ -977,7 +990,7 @@ async function validateScriptFileForShellBleed(params: {
       });
       content = safeRead.buffer.toString("utf-8");
     } catch (error) {
-      if (shouldSkipScriptPreflightPathError(error)) {
+      if (shouldSkipScriptPreflightPathError(error, SafeOpenError)) {
         // Preflight validation is best-effort: skip path/read failures and
         // continue to execute the command normally.
         continue;
@@ -1322,6 +1335,12 @@ export function createExecTool(
   const notifyOnExit = defaults?.notifyOnExit !== false;
   const notifyOnExitEmptySuccess = defaults?.notifyOnExitEmptySuccess === true;
   const notifySessionKey = normalizeOptionalString(defaults?.sessionKey);
+  const notifyDeliveryContext = normalizeDeliveryContext({
+    channel: defaults?.messageProvider,
+    to: defaults?.currentChannelId,
+    accountId: defaults?.accountId,
+    threadId: defaults?.currentThreadTs,
+  });
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);
   // Derive agentId only when sessionKey is an agent session key.
   const parsedAgentSession = parseAgentSessionKey(defaults?.sessionKey);
@@ -1668,6 +1687,7 @@ export function createExecTool(
         notifyOnExitEmptySuccess,
         scopeKey: defaults?.scopeKey,
         sessionKey: notifySessionKey,
+        notifyDeliveryContext,
         timeoutSec: effectiveTimeout,
         onUpdate,
       });
@@ -1776,3 +1796,7 @@ export function createExecTool(
 }
 
 export const execTool = createExecTool();
+
+export const __testing = {
+  validateScriptFileForShellBleed,
+};

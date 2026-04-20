@@ -116,6 +116,33 @@ async function expectInlineActionSkipped(params: {
   expect(handleCommandsMock).not.toHaveBeenCalled();
 }
 
+async function runInlineStatusAction(storePath?: string) {
+  const typing = createTypingController();
+  const ctx = buildTestCtx({
+    Body: "/status",
+    CommandBody: "/status",
+  });
+  const result = await handleInlineActions(
+    createHandleInlineActionsInput({
+      ctx,
+      typing,
+      cleanedBody: stripInlineStatus("/status").cleaned,
+      command: {
+        isAuthorizedSender: true,
+        rawBodyNormalized: "/status",
+        commandBodyNormalized: "/status",
+      },
+      overrides: {
+        allowTextCommands: true,
+        inlineStatusRequested: true,
+        ...(storePath ? { storePath } : {}),
+      },
+    }),
+  );
+
+  return { result, typing };
+}
+
 describe("handleInlineActions", () => {
   beforeEach(() => {
     handleCommandsMock.mockReset();
@@ -235,28 +262,7 @@ describe("handleInlineActions", () => {
   });
 
   it("does not run command handlers after replying to an inline status-only turn", async () => {
-    const typing = createTypingController();
-    const ctx = buildTestCtx({
-      Body: "/status",
-      CommandBody: "/status",
-    });
-
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: stripInlineStatus("/status").cleaned,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: "/status",
-          commandBodyNormalized: "/status",
-        },
-        overrides: {
-          allowTextCommands: true,
-          inlineStatusRequested: true,
-        },
-      }),
-    );
+    const { result, typing } = await runInlineStatusAction();
 
     expect(result).toEqual({ kind: "reply", reply: undefined });
     expect(buildStatusReplyMock).toHaveBeenCalledTimes(1);
@@ -270,29 +276,7 @@ describe("handleInlineActions", () => {
   });
 
   it("preserves storePath when routing inline status through the shared status builder", async () => {
-    const typing = createTypingController();
-    const ctx = buildTestCtx({
-      Body: "/status",
-      CommandBody: "/status",
-    });
-
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: stripInlineStatus("/status").cleaned,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: "/status",
-          commandBodyNormalized: "/status",
-        },
-        overrides: {
-          allowTextCommands: true,
-          inlineStatusRequested: true,
-          storePath: "/tmp/inline-status-store.json",
-        },
-      }),
-    );
+    const { result } = await runInlineStatusAction("/tmp/inline-status-store.json");
 
     expect(result).toEqual({ kind: "reply", reply: undefined });
     expect(buildStatusReplyMock).toHaveBeenCalledWith(
@@ -389,6 +373,47 @@ describe("handleInlineActions", () => {
     expect(buildStatusReplyMock).toHaveBeenCalledTimes(1);
     expect(handleCommandsMock).not.toHaveBeenCalled();
     expect(typing.cleanup).toHaveBeenCalled();
+  });
+
+  it("continues into the agent when mention-wrapped inline status leaves real text", async () => {
+    const typing = createTypingController();
+    const ctx = buildTestCtx({
+      Body: "<@123> /status what's next?",
+      CommandBody: "<@123> /status what's next?",
+      Provider: "discord",
+      Surface: "discord",
+      ChatType: "channel",
+      WasMentioned: true,
+    });
+
+    const result = await handleInlineActions(
+      createHandleInlineActionsInput({
+        ctx,
+        typing,
+        cleanedBody: "<@123> what's next?",
+        command: {
+          surface: "discord",
+          channel: "discord",
+          channelId: "discord",
+          isAuthorizedSender: true,
+          rawBodyNormalized: "<@123> /status what's next?",
+          commandBodyNormalized: "<@123> /status what's next?",
+        },
+        overrides: {
+          allowTextCommands: true,
+          inlineStatusRequested: true,
+          isGroup: true,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: "continue",
+      directives: clearInlineDirectives("<@123> what's next?"),
+      abortedLastRun: false,
+    });
+    expect(buildStatusReplyMock).toHaveBeenCalledTimes(1);
+    expect(handleCommandsMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips stale queued messages that are at or before the /stop cutoff", async () => {
